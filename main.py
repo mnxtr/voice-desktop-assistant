@@ -4,6 +4,7 @@ import signal
 import logging
 import threading
 import time
+import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -31,6 +32,9 @@ from llm.workflow_engine import WorkflowEngine
 from gaze.tracker import GazeTracker
 from gaze.calibration import GazeCalibrator
 from gaze.dwell import DwellClicker
+from server.websocket_server import WebSocketServer
+from server.message_handler import MessageHandler, DefaultHandlers
+from server.broadcaster import Broadcaster
 
 mouse = None
 desktop = None
@@ -122,6 +126,13 @@ class DesktopAssistant:
         self._dwell_clicker = None
         self._tray = None
 
+        # WebSocket components
+        self._websocket_server = None
+        self._websocket_thread = None
+        self._websocket_loop = None
+        self._broadcaster = None
+        self._message_handler = None
+
         # Set up workflow callbacks
         self._workflow_engine.set_status_callback(self._on_workflow_status)
         self._workflow_engine.set_step_callback(self._on_workflow_step)
@@ -130,6 +141,11 @@ class DesktopAssistant:
         logger.info("Voice command: %s", command)
         self._overlay.set_state("processing")
         self._overlay.set_command(command)
+
+        # Broadcast to WebSocket clients
+        if self._broadcaster:
+            self._broadcaster.broadcast_command_received(command)
+            self._broadcaster.broadcast_status_update("processing")
 
         threading.Thread(
             target=self._process_command,
@@ -149,6 +165,10 @@ class DesktopAssistant:
                 logger.info(f"Executing workflow with {len(steps)} steps")
 
                 self._overlay.set_state("executing")
+                if self._broadcaster:
+                    self._broadcaster.broadcast_status_update("executing")
+                    self._broadcaster.broadcast_workflow_plan(steps)
+
                 self._speaker.say(f"Executing {len(steps)} step workflow")
 
                 result = self._workflow_engine.execute_workflow(steps)
@@ -161,10 +181,16 @@ class DesktopAssistant:
                     message = result["message"]
                     self._overlay.set_state("error")
                     self._overlay.set_result(message)
+                    if self._broadcaster:
+                        self._broadcaster.broadcast_status_update("error")
+                        self._broadcaster.broadcast_error(message, "workflow")
                     self._speaker.say(f"Workflow failed: {message}")
             else:
                 # Single action
                 self._overlay.set_state("executing")
+                if self._broadcaster:
+                    self._broadcaster.broadcast_status_update("executing")
+
                 success, message = self._execute_single_action(action_or_workflow)
 
                 if success:
@@ -173,16 +199,24 @@ class DesktopAssistant:
                 else:
                     self._overlay.set_state("error")
                     self._overlay.set_result(message)
+                    if self._broadcaster:
+                        self._broadcaster.broadcast_status_update("error")
+                        self._broadcaster.broadcast_error(message, "action")
                     self._speaker.say(message)
 
         except Exception as e:
             logger.error("Command processing error: %s", e)
             self._overlay.set_state("error")
             self._overlay.set_result(str(e))
+            if self._broadcaster:
+                self._broadcaster.broadcast_status_update("error")
+                self._broadcaster.broadcast_error(str(e), "general")
             self._speaker.say(f"Error: {e}")
 
         time.sleep(1)
         self._overlay.set_state("idle")
+        if self._broadcaster:
+            self._broadcaster.broadcast_status_update("idle")
 
     def _execute_single_action(self, action):
         """Execute a single action and return (success, message)"""
@@ -333,6 +367,11 @@ class DesktopAssistant:
         status = "✓" if success else "✗"
         logger.info(f"Step {step_index + 1} {status}: {action_name} - {message}")
 
+        # Broadcast step completion
+        if self._broadcaster:
+            step_status = "completed" if success else "failed"
+            self._broadcaster.broadcast_step_executed(step_index, step_status, message)
+
     def _start_gaze_tracking(self):
         if self._gaze_tracker and self._gaze_tracker.is_running:
             return True, "Eye tracking is already active"
@@ -425,6 +464,117 @@ class DesktopAssistant:
     def _on_quit(self, icon=None, item=None):
         self.shutdown()
 
+    def _toggle_listening(self, enabled):
+        """Toggle listening (for WebSocket commands)"""
+        if enabled:
+            if not self._listener or not self._listener.is_running:
+                self._listener = VoiceListener(self._on_voice_command)
+                self._listener.start()
+                self._overlay.set_state("idle")
+                self._overlay.set_result("Listening resumed")
+        else:
+            if self._listener and self._listener.is_running:
+                self._listener.stop()
+                self._overlay.set_state("idle")
+                self._overlay.set_result("Listening paused")
+
+    def _toggle_gaze_tracking(self, enabled):
+        """Toggle gaze tracking (for WebSocket commands)"""
+        if enabled:
+            if not self._gaze_tracker or not self._gaze_tracker.is_running:
+                self._start_gaze_tracking()
+        else:
+            if self._gaze_tracker and self._gaze_tracker.is_running:
+                self._stop_gaze_tracking()
+
+    def _show_grid(self):
+        """Show grid overlay (for WebSocket commands)"""
+        if self._overlay:
+            self._overlay.show_grid()
+
+    def _hide_grid(self):
+        """Hide grid overlay (for WebSocket commands)"""
+        if self._overlay:
+            self._overlay.hide_grid()
+
+    def _update_config(self, config_updates):
+        """Update configuration (for WebSocket commands)"""
+        logger.info(f"Config update requested: {config_updates}")
+        # TODO: Implement config update logic (Phase 3/4)
+        pass
+
+    def _log_correction(self, original_command, correct_action):
+        """Log correction for fine-tuning (for WebSocket commands)"""
+        logger.info(f"Correction logged: '{original_command}' -> {correct_action}")
+        # TODO: Implement correction logging (Phase 4)
+        pass
+
+    def _setup_websocket_server(self):
+        """Initialize and configure WebSocket server components"""
+        try:
+            # Create WebSocket server
+            ws_host = config.websocket_host
+            ws_port = config.websocket_port
+            self._websocket_server = WebSocketServer(ws_host, ws_port)
+
+            # Create broadcaster
+            self._broadcaster = Broadcaster(self._websocket_server)
+
+            # Create message handler
+            self._message_handler = MessageHandler()
+
+            # Register default handlers
+            default_handlers = DefaultHandlers(self)
+            self._message_handler.register_handler(
+                "toggle_listening", default_handlers.handle_toggle_listening
+            )
+            self._message_handler.register_handler(
+                "toggle_gaze", default_handlers.handle_toggle_gaze
+            )
+            self._message_handler.register_handler(
+                "show_grid", default_handlers.handle_show_grid
+            )
+            self._message_handler.register_handler(
+                "hide_grid", default_handlers.handle_hide_grid
+            )
+            self._message_handler.register_handler(
+                "update_config", default_handlers.handle_update_config
+            )
+            self._message_handler.register_handler(
+                "correct_interpretation", default_handlers.handle_correct_interpretation
+            )
+
+            # Set message handler callback on WebSocket server
+            self._websocket_server.set_message_handler(
+                lambda data, ws: asyncio.create_task(
+                    self._message_handler.handle_message(data, ws)
+                )
+            )
+
+            logger.info("WebSocket server components initialized")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to setup WebSocket server: {e}")
+            return False
+
+    def _run_websocket_server(self):
+        """Run WebSocket server in asyncio event loop (runs in separate thread)"""
+        try:
+            # Create new event loop for this thread
+            self._websocket_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._websocket_loop)
+
+            # Store reference to loop in broadcaster
+            self._broadcaster._loop = self._websocket_loop
+
+            # Run server
+            self._websocket_loop.run_until_complete(self._websocket_server.start())
+        except Exception as e:
+            logger.error(f"WebSocket server error: {e}")
+        finally:
+            if self._websocket_loop:
+                self._websocket_loop.close()
+
     def _check_llm(self):
         """Check LLM processor connection and status"""
         # Get status of hybrid processor
@@ -461,6 +611,20 @@ class DesktopAssistant:
         self._overlay.start()
         time.sleep(0.5)
 
+        # Start WebSocket server
+        if self._setup_websocket_server():
+            self._websocket_thread = threading.Thread(
+                target=self._run_websocket_server, daemon=True, name="WebSocketServer"
+            )
+            self._websocket_thread.start()
+            logger.info(
+                f"WebSocket server started on ws://{config.websocket_host}:{config.websocket_port}"
+            )
+        else:
+            logger.warning(
+                "WebSocket server not started - continuing without WebSocket support"
+            )
+
         if _HAS_TRAY and SystemTray:
             self._tray = SystemTray(
                 on_quit=self._on_quit,
@@ -486,6 +650,8 @@ class DesktopAssistant:
             "Desktop assistant ready. Say hey assistant followed by your command."
         )
         self._overlay.set_state("idle")
+        if self._broadcaster:
+            self._broadcaster.broadcast_status_update("idle")
 
         logger.info("Desktop Assistant is running")
 
@@ -513,6 +679,19 @@ class DesktopAssistant:
 
         if self._tray:
             self._tray.stop()
+
+        # Stop WebSocket server
+        if self._websocket_server and self._websocket_loop:
+            try:
+                # Schedule server stop in its event loop
+                asyncio.run_coroutine_threadsafe(
+                    self._websocket_server.stop(), self._websocket_loop
+                )
+                # Wait briefly for graceful shutdown
+                time.sleep(0.5)
+                logger.info("WebSocket server stopped")
+            except Exception as e:
+                logger.error(f"Error stopping WebSocket server: {e}")
 
         logger.info("Shutdown complete")
 
