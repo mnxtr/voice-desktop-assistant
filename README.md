@@ -5,17 +5,20 @@
 ### Hands-free desktop control powered by local AI
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Gemini](https://img.shields.io/badge/Gemini-API-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-000000?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.ai)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
 <br />
 
-A voice-controlled desktop navigation assistant designed for users with **motor and mobility impairments**. Speak naturally to control your entire desktop — open apps, click, scroll, type, and more — all processed locally with zero cloud dependency.
+A voice-controlled desktop navigation assistant designed for users with **motor and mobility impairments**. Speak naturally to control your entire desktop — open apps, click, scroll, type, and more. 
+
+**NEW**: Now with **Gemini API support** for agentic multi-step workflows! Use Gemini for cloud-powered intelligence or run 100% offline with Ollama.
 
 <br />
 
-[Getting Started](#-getting-started) · [Voice Commands](#-voice-commands) · [Eye Tracking](#-eye-gaze-tracking) · [Configuration](#%EF%B8%8F-configuration) · [Architecture](#-architecture)
+[Getting Started](#-getting-started) · [Voice Commands](#-voice-commands) · [Multi-Step Workflows](#-multi-step-workflows-new) · [Eye Tracking](#-eye-gaze-tracking) · [Gemini Setup](docs/GEMINI_SETUP.md) · [Configuration](#%EF%B8%8F-configuration)
 
 ---
 
@@ -30,13 +33,13 @@ A voice-controlled desktop navigation assistant designed for users with **motor 
 <td width="50%">
 
 **Voice-First Navigation**
-> Say *"Hey Assistant, open Chrome"* and it just works. Natural language commands are interpreted by a local LLM and translated into desktop actions instantly.
+> Say *"Hey Assistant, open Chrome and search for weather"* and watch it execute multiple steps automatically. Natural language commands powered by Gemini AI or local Ollama LLM.
 
 </td>
 <td width="50%">
 
-**100% Offline & Private**
-> Everything runs on your machine. Speech recognition (Vosk), LLM processing (Ollama), and text-to-speech (pyttsx3) — no internet, no telemetry, no cloud.
+**Hybrid LLM Processing**
+> Choose your mode: **Gemini API** for agentic workflows (cloud), **Ollama** for offline privacy, or **Hybrid** (best of both worlds with automatic fallback).
 
 </td>
 </tr>
@@ -49,8 +52,8 @@ A voice-controlled desktop navigation assistant designed for users with **motor 
 </td>
 <td width="50%">
 
-**Screen Grid System**
-> Say *"Show grid"* to overlay numbered cells on your screen. Then say *"Click 5"* to instantly click that region. Fast, accurate, no mouse needed.
+**Multi-Step Workflows (NEW)**
+> Complex commands become automatic workflows. "Take a screenshot and open Paint" → 2-step workflow executes seamlessly.
 
 </td>
 </tr>
@@ -176,7 +179,62 @@ Say **"Hey Assistant"** followed by any command:
 
 <br />
 
-## Eye-Gaze Tracking
+## 🔗 Multi-Step Workflows (NEW)
+
+With **Gemini API** integration, the assistant can now execute **complex multi-step commands** automatically:
+
+### Example Workflows
+
+| Voice Command | Workflow Steps |
+|---------------|----------------|
+| `Open Chrome and search for weather` | 1. Open Chrome<br>2. Type "weather"<br>3. Press Enter |
+| `Take a screenshot and open Paint` | 1. Take screenshot<br>2. Open Paint application |
+| `Copy this and paste it in Notepad` | 1. Copy (Ctrl+C)<br>2. Open Notepad<br>3. Paste (Ctrl+V) |
+| `Minimize this window and show desktop` | 1. Minimize current window<br>2. Press Win+D (show desktop) |
+
+### How It Works
+
+1. **Gemini AI** analyzes your command and creates a step-by-step execution plan
+2. **Workflow Engine** executes each step sequentially with status updates
+3. **Visual Feedback** shows progress in the status overlay
+4. **Automatic Error Handling** — if a step fails, the workflow aborts gracefully
+
+### Configuration
+
+Edit `~/.desktop_llm_assistant/config.json`:
+
+```json
+{
+  "llm_mode": "hybrid",
+  "gemini_model": "gemini-1.5-flash",
+  "gemini_fallback_enabled": true
+}
+```
+
+**LLM Modes**:
+- `"hybrid"` (Recommended) — Gemini with Ollama fallback
+- `"gemini"` — Gemini API only (requires API key)
+- `"ollama"` — Offline-only mode
+
+### Setup Gemini API
+
+See [Gemini Setup Guide](docs/GEMINI_SETUP.md) for detailed instructions.
+
+**Quick Start**:
+```bash
+# 1. Get API key from https://ai.google.dev/
+# 2. Set environment variable
+export GEMINI_API_KEY="your-api-key-here"
+
+# 3. Restart the assistant
+python main.py
+```
+
+**Cost**: ~$0.26/month for heavy usage (stays within free tier for most users)
+
+<br />
+
+## 👁️ Eye-Gaze Tracking
 
 The experimental gaze module uses **MediaPipe Face Mesh** through your webcam — no special hardware required.
 
@@ -218,7 +276,9 @@ All settings are stored in `~/.desktop_llm_assistant/config.json` and can be edi
 | Setting | Default | Description |
 |---------|:-------:|-------------|
 | `wake_word` | `hey assistant` | Phrase to activate listening |
-| `ollama_model` | `mistral` | LLM model for intent parsing |
+| `llm_mode` | `hybrid` | LLM processing mode (gemini/ollama/hybrid) |
+| `gemini_model` | `gemini-1.5-flash` | Gemini API model name |
+| `ollama_model` | `mistral` | Ollama LLM model for intent parsing |
 | `dwell_time` | `1.5` | Seconds of gaze dwell before click |
 | `gaze_smoothing` | `5` | Number of frames for gaze smoothing |
 | `grid_rows` | `3` | Grid overlay row count |
@@ -242,7 +302,10 @@ voice-desktop-assistant/
 │   └── speaker.py           pyttsx3 text-to-speech audio feedback
 │
 ├── llm/
-│   └── processor.py         Ollama LLM — natural language → structured JSON actions
+│   ├── gemini_processor.py  Gemini API client for agentic workflows
+│   ├── processor.py         Ollama LLM — natural language → structured JSON actions
+│   ├── hybrid_processor.py  Smart LLM selector (Gemini ↔ Ollama fallback)
+│   └── workflow_engine.py   Multi-step workflow executor with status callbacks
 │
 ├── actions/
 │   ├── desktop.py           App lifecycle — open, close, switch, minimize, maximize

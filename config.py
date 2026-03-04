@@ -12,6 +12,11 @@ DEFAULTS = {
     "vosk_model_path": str(CONFIG_DIR / "vosk-model"),
     "voice_rate": 175,
     "voice_volume": 1.0,
+    "tts_model": "tts_models/en/ljspeech/tacotron2-DDC",
+    "whisper_model_size": "base",
+    "whisper_compute_type": "int8",
+    "vad_aggressiveness": 2,
+    "vad_silence_frames": 15,
     "dwell_time": 1.5,
     "gaze_enabled": False,
     "gaze_smoothing": 5,
@@ -24,6 +29,16 @@ DEFAULTS = {
     "audio_block_size": 8000,
     "failsafe_enabled": True,
     "mouse_move_speed": 0.3,
+    "gemini_api_key_env": "GEMINI_API_KEY",
+    "gemini_model": "gemini-1.5-flash",
+    "gemini_temperature": 0.1,
+    "gemini_max_tokens": 512,
+    "llm_mode": "hybrid",
+    "gemini_fallback_enabled": True,
+    "gemini_timeout": 10,
+    "ui_mode": "tkinter",
+    "websocket_host": "localhost",
+    "websocket_port": 8765,
 }
 
 
